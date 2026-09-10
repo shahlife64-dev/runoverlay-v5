@@ -25,6 +25,7 @@ object TelemetryOverlayRenderer {
         context: Context,
         inputFile: File,
         outputVideoFile: File,
+        onProgress: (String) -> Unit,
         onComplete: (Boolean, String) -> Unit
     ) {
         Thread {
@@ -33,7 +34,7 @@ object TelemetryOverlayRenderer {
                 if (frameDir.exists()) frameDir.deleteRecursively()
                 frameDir.mkdirs()
 
-                // Parse GPX file
+                onProgress("Parsing GPX/FIT telemetry...")
                 val points = parseGpxFile(inputFile)
 
                 if (points.isEmpty()) {
@@ -41,7 +42,6 @@ object TelemetryOverlayRenderer {
                     return@Thread
                 }
 
-                val fps = 30
                 val width = 1280
                 val height = 720
                 
@@ -58,50 +58,53 @@ object TelemetryOverlayRenderer {
                     color = Color.parseColor("#CC000000")
                 }
 
-                var currentFrame = 0
-                for (point in points) {
-                    for (f in 0 until fps) {
-                        canvas.drawColor(Color.GREEN) // Green screen background
+                val totalPoints = points.size
+                for ((index, point) in points.withIndex()) {
+                    if (index % 10 == 0) {
+                        onProgress("Generating overlay frame ${index + 1} / $totalPoints...")
+                    }
 
-                        val cardLeft = 40f
-                        val cardTop = height - 260f
-                        val cardRight = 620f
-                        val cardBottom = height - 40f
-                        canvas.drawRoundRect(cardLeft, cardTop, cardRight, cardBottom, 16f, 16f, bgCardPaint)
+                    canvas.drawColor(Color.GREEN) // Chroma Key background
 
-                        var yPos = cardTop + 45f
-                        canvas.drawText("TIME: ${point.timeIso}", cardLeft + 20f, yPos, textPaint)
-                        
-                        yPos += 40f
-                        val distStr = String.format(Locale.US, "DIST: %.2f km", point.distanceKm)
-                        val elevStr = String.format(Locale.US, "ELEV: %.0f m", point.elevationM)
-                        canvas.drawText("$distStr | $elevStr", cardLeft + 20f, yPos, textPaint)
+                    val cardLeft = 40f
+                    val cardTop = height - 260f
+                    val cardRight = 620f
+                    val cardBottom = height - 40f
+                    canvas.drawRoundRect(cardLeft, cardTop, cardRight, cardBottom, 16f, 16f, bgCardPaint)
 
-                        yPos += 40f
-                        val paceStr = if (point.speedMs > 0.5) {
-                            val secPerKm = (1000 / point.speedMs).toInt()
-                            String.format(Locale.US, "PACE: %d'%02d\" /km", secPerKm / 60, secPerKm % 60)
-                        } else {
-                            "PACE: --'--\""
-                        }
-                        canvas.drawText(paceStr, cardLeft + 20f, yPos, textPaint)
+                    var yPos = cardTop + 45f
+                    canvas.drawText("TIME: ${point.timeIso}", cardLeft + 20f, yPos, textPaint)
+                    
+                    yPos += 40f
+                    val distStr = String.format(Locale.US, "DIST: %.2f km", point.distanceKm)
+                    val elevStr = String.format(Locale.US, "ELEV: %.0f m", point.elevationM)
+                    canvas.drawText("$distStr | $elevStr", cardLeft + 20f, yPos, textPaint)
 
-                        yPos += 40f
-                        val hrStr = if (point.heartRate > 0) "${point.heartRate} bpm" else "-- bpm"
-                        canvas.drawText("CADENCE: ${point.cadence} spm | HR: $hrStr", cardLeft + 20f, yPos, textPaint)
+                    yPos += 40f
+                    val paceStr = if (point.speedMs > 0.5) {
+                        val secPerKm = (1000 / point.speedMs).toInt()
+                        String.format(Locale.US, "PACE: %d'%02d\" /km", secPerKm / 60, secPerKm % 60)
+                    } else {
+                        "PACE: --'--\""
+                    }
+                    canvas.drawText(paceStr, cardLeft + 20f, yPos, textPaint)
 
-                        val frameFile = File(frameDir, String.format("frame_%05d.png", currentFrame))
-                        FileOutputStream(frameFile).use { out ->
-                            bitmap.compress(Bitmap.CompressFormat.PNG, 80, out)
-                            out.flush()
-                        }
-                        currentFrame++
+                    yPos += 40f
+                    canvas.drawText("CADENCE: ${point.cadence} spm", cardLeft + 20f, yPos, textPaint)
+
+                    val frameFile = File(frameDir, String.format("frame_%05d.png", index))
+                    FileOutputStream(frameFile).use { out ->
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 80, out)
+                        out.flush()
                     }
                 }
 
                 bitmap.recycle()
 
-                val ffmpegCmd = "-y -r $fps -i ${frameDir.absolutePath}/frame_%05d.png -c:v libx264 -pix_fmt yuv420p ${outputVideoFile.absolutePath}"
+                onProgress("Encoding MP4 video with FFmpeg...")
+
+                // Fast 1 FPS encoding matching exact 1 frame = 1 second GPX time
+                val ffmpegCmd = "-y -r 1 -i ${frameDir.absolutePath}/frame_%05d.png -c:v libx264 -preset ultrafast -pix_fmt yuv420p ${outputVideoFile.absolutePath}"
                 val rc = FFmpeg.execute(ffmpegCmd)
 
                 frameDir.deleteRecursively()
