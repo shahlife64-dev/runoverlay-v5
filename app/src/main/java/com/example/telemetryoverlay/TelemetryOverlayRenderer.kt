@@ -28,6 +28,7 @@ object TelemetryOverlayRenderer {
         onProgress: (String) -> Unit,
         onComplete: (Boolean, String) -> Unit
     ) {
+        // Force background thread execution
         Thread {
             try {
                 val frameDir = File(context.cacheDir, "frames")
@@ -38,7 +39,7 @@ object TelemetryOverlayRenderer {
                 val points = parseGpxFile(inputFile)
 
                 if (points.isEmpty()) {
-                    onComplete(false, "No valid telemetry points found in file.")
+                    onComplete(false, "No valid telemetry points found.")
                     return@Thread
                 }
 
@@ -60,11 +61,11 @@ object TelemetryOverlayRenderer {
 
                 val totalPoints = points.size
                 for ((index, point) in points.withIndex()) {
-                    if (index % 10 == 0) {
+                    if (index % 5 == 0 || index == totalPoints - 1) {
                         onProgress("Generating overlay frame ${index + 1} / $totalPoints...")
                     }
 
-                    canvas.drawColor(Color.GREEN) // Chroma Key background
+                    canvas.drawColor(Color.GREEN) // Green screen background
 
                     val cardLeft = 40f
                     val cardTop = height - 260f
@@ -103,7 +104,7 @@ object TelemetryOverlayRenderer {
 
                 onProgress("Encoding MP4 video with FFmpeg...")
 
-                // Fast 1 FPS encoding matching exact 1 frame = 1 second GPX time
+                // Execute FFmpeg with ultrafast flags
                 val ffmpegCmd = "-y -r 1 -i ${frameDir.absolutePath}/frame_%05d.png -c:v libx264 -preset ultrafast -pix_fmt yuv420p ${outputVideoFile.absolutePath}"
                 val rc = FFmpeg.execute(ffmpegCmd)
 
@@ -112,11 +113,11 @@ object TelemetryOverlayRenderer {
                 if (rc == Config.RETURN_CODE_SUCCESS) {
                     onComplete(true, outputVideoFile.absolutePath)
                 } else {
-                    onComplete(false, "")
+                    onComplete(false, "FFmpeg failed with return code $rc")
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                onComplete(false, "")
+            } catch (t: Throwable) {
+                t.printStackTrace()
+                onComplete(false, t.localizedMessage ?: "Unknown Error")
             }
         }.start()
     }
