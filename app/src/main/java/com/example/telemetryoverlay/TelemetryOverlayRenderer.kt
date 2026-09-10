@@ -2,8 +2,8 @@ package com.example.telemetryoverlay
 
 import android.content.Context
 import android.graphics.*
-import com.arthenica.mobileffmpeg.Config
-import com.arthenica.mobileffmpeg.FFmpeg
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 import org.w3c.dom.Element
 import java.io.File
 import java.io.FileOutputStream
@@ -28,7 +28,6 @@ object TelemetryOverlayRenderer {
         onProgress: (String) -> Unit,
         onComplete: (Boolean, String) -> Unit
     ) {
-        // Force background thread execution
         Thread {
             try {
                 val frameDir = File(context.cacheDir, "frames")
@@ -65,7 +64,7 @@ object TelemetryOverlayRenderer {
                         onProgress("Generating overlay frame ${index + 1} / $totalPoints...")
                     }
 
-                    canvas.drawColor(Color.GREEN) // Green screen background
+                    canvas.drawColor(Color.GREEN) // Chroma Key Green
 
                     val cardLeft = 40f
                     val cardTop = height - 260f
@@ -104,16 +103,15 @@ object TelemetryOverlayRenderer {
 
                 onProgress("Encoding MP4 video with FFmpeg...")
 
-                // Execute FFmpeg with ultrafast flags
                 val ffmpegCmd = "-y -r 1 -i ${frameDir.absolutePath}/frame_%05d.png -c:v libx264 -preset ultrafast -pix_fmt yuv420p ${outputVideoFile.absolutePath}"
-                val rc = FFmpeg.execute(ffmpegCmd)
+                val session = FFmpegKit.execute(ffmpegCmd)
 
                 frameDir.deleteRecursively()
 
-                if (rc == Config.RETURN_CODE_SUCCESS) {
+                if (ReturnCode.isSuccess(session.returnCode)) {
                     onComplete(true, outputVideoFile.absolutePath)
                 } else {
-                    onComplete(false, "FFmpeg failed with return code $rc")
+                    onComplete(false, "FFmpeg failed with code ${session.returnCode}")
                 }
             } catch (t: Throwable) {
                 t.printStackTrace()
