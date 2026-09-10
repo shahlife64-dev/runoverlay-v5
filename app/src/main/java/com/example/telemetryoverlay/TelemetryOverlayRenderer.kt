@@ -7,11 +7,13 @@ import com.arthenica.mobileffmpeg.FFmpeg
 import org.w3c.dom.Element
 import java.io.File
 import java.io.FileOutputStream
-import java.util.Locale
+import java.text.SimpleDateFormat
+import java.util.*
 import javax.xml.parsers.DocumentBuilderFactory
 
 data class TelemetryPoint(
     val timeIso: String = "",
+    val timeMillis: Long = 0L,
     val distanceKm: Double = 0.0,
     val speedMs: Double = 0.0,
     val cadence: Int = 0,
@@ -34,7 +36,7 @@ object TelemetryOverlayRenderer {
                 if (frameDir.exists()) frameDir.deleteRecursively()
                 frameDir.mkdirs()
 
-                onProgress("Parsing GPX/FIT telemetry...")
+                onProgress("Parsing GPX telemetry...")
                 val points = parseGpxFile(inputFile)
 
                 if (points.isEmpty()) {
@@ -80,16 +82,37 @@ object TelemetryOverlayRenderer {
                     val elevStr = String.format(Locale.US, "ELEV: %.0f m", point.elevationM)
                     canvas.drawText("$distStr | $elevStr", cardLeft + 20f, yPos, textPaint)
 
-                    // Format speed (m/s) to Pace (MM:SS /km)
+                    // Calculate Pace safely
                     yPos += 40f
-                    val paceStr = if (point.speedMs > 0.5) {
-                        val totalSecondsPerKm = (1000 / point.speedMs).toInt()
+                    var currentSpeedMs = point.speedMs
+
+                    if (currentSpeedMs <= 0.1 && index > 0) {
+                        val prevPoint = points[index - 1]
+                        val distDiffKm = point.distanceKm - prevPoint.distanceKm
+                        val timeDiffSec = if (point.timeMillis > 0 && prevPoint.timeMillis > 0) {
+                            (point.timeMillis - prevPoint.timeMillis) / 1000.0
+                        } else {
+                            1.0 // fallback to 1 sec step
+                        }
+                        
+                        if (timeDiffSec > 0 && distDiffKm > 0) {
+                            currentSpeedMs = (distDiffKm * 1000.0) / timeDiffSec
+                        }
+                    }
+
+                    val paceStr = if (currentSpeedMs > 0.4) {
+                        val totalSecondsPerKm = (1000.0 / currentSpeedMs).toInt()
                         val minutes = totalSecondsPerKm / 60
                         val seconds = totalSecondsPerKm % 60
-                        String.format(Locale.US, "PACE: %02d:%02d /km", minutes, seconds)
+                        if (minutes in 1..29) {
+                            String.format(Locale.US, "PACE: %02d:%02d /km", minutes, seconds)
+                        } else {
+                            "PACE: --:-- /km"
+                        }
                     } else {
                         "PACE: --:-- /km"
                     }
+
                     canvas.drawText(paceStr, cardLeft + 20f, yPos, textPaint)
 
                     yPos += 40f
@@ -125,6 +148,7 @@ object TelemetryOverlayRenderer {
 
     private fun parseGpxFile(file: File): List<TelemetryPoint> {
         val points = mutableListOf<TelemetryPoint>()
+
         try {
             val factory = DocumentBuilderFactory.newInstance()
             factory.isNamespaceAware = true
@@ -137,6 +161,20 @@ object TelemetryOverlayRenderer {
                 val ele = node.getElementsByTagName("ele").item(0)?.textContent?.toDoubleOrNull() ?: 0.0
                 val timeRaw = node.getElementsByTagName("time").item(0)?.textContent ?: ""
                 
+                var timeMs = 0L
+                val cleanTimeStr = timeRaw.replace("Z", "").replace("T", " ")
+                try {
+                    // Safe timestamp parsing across different ISO formats
+                    val timePart = cleanTimeStr.substringAfter(" ").substringBefore(".")
+                    val parts = timePart.split(":")
+                    if (parts.size == 3) {
+                        val hours = parts[0].toLongOrNull() ?: 0L
+                        val mins = parts[1].toLongOrNull() ?: 0L
+                        val secs = parts[2].toLongOrNull() ?: 0L
+                        timeMs = (hours * 3600 + mins * 60 + secs) * 1000L
+                    }
+                } catch (_: Exception) {}
+
                 var distKm = 0.0
                 var cadence = 0
                 var speedMs = 0.0
@@ -144,6 +182,7 @@ object TelemetryOverlayRenderer {
                 val extensions = node.getElementsByTagName("extensions")
                 if (extensions.length > 0) {
                     val ext = extensions.item(0) as Element
+                    
                     val distElem = ext.getElementsByTagNameNS("*", "distance").item(0)
                         ?: ext.getElementsByTagName("gpxdata:distance").item(0)
                     val cadElem = ext.getElementsByTagNameNS("*", "cadence").item(0)
@@ -153,14 +192,19 @@ object TelemetryOverlayRenderer {
 
                     distKm = (distElem?.textContent?.toDoubleOrNull() ?: 0.0) / 1000.0
                     cadence = (cadElem?.textContent?.toIntOrNull() ?: 0) * 2
-                    speedMs = speedElem?.textContent?.toDoubleOrNull() ?: 0.0
+                    
+                    val parsedSpeed = speedElem?.textContent?.toDoubleOrNull() ?: 0.0
+                    speedMs = if (parsedSpeed > 30.0) parsedSpeed / 3.6 else parsedSpeed
                 }
 
-                val formattedTime = if (timeRaw.contains("T")) timeRaw.substringAfter("T").substringBefore("Z") else timeRaw
+                val formattedTime = if (timeRaw.contains("T")) {
+                    timeRaw.substringAfter("T").substringBefore(".").substringBefore("Z")
+                } else timeRaw
 
                 points.add(
                     TelemetryPoint(
                         timeIso = formattedTime,
+                        timeMillis = timeMs,
                         distanceKm = distKm,
                         speedMs = speedMs,
                         cadence = cadence,
