@@ -44,32 +44,37 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 1001 && resultCode == Activity.RESULT_OK) {
             selectedGpxUri = data?.data
-            statusText.text = "Selected File: ${selectedGpxUri?.path}"
+            statusText.text = "Selected File Loaded Successfully"
         }
     }
 
     private fun processTelemetryOverlay() {
-        statusText.text = "Generating Overlay Video with Chroma Green Background..."
-        
-        val gpxFile = File(cacheDir, "input.gpx")
-        contentResolver.openInputStream(selectedGpxUri!!)?.use { input ->
-            FileOutputStream(gpxFile).use { output -> input.copyTo(output) }
-        }
+        statusText.text = "Rendering MP4 overlay... Please wait."
 
-        val outputFile = File(getExternalFilesDir(null), "telemetry_overlay.mp4")
+        try {
+            val gpxFile = File(cacheDir, "input_data.gpx")
+            contentResolver.openInputStream(selectedGpxUri!!)?.use { input ->
+                FileOutputStream(gpxFile).use { output -> input.copyTo(output) }
+            }
 
-        TelemetryOverlayRenderer.renderGreenScreenOverlay(
-            context = this,
-            gpxFile = gpxFile,
-            outputVideoFile = outputFile
-        ) { success, path ->
-            runOnUiThread {
-                if (success) {
-                    statusText.text = "Success! Saved to:\n$path\n\nImport into CapCut and apply 'Chroma Key' on Green!"
-                } else {
-                    statusText.text = "Failed to render video."
+            val outputFile = File(getExternalFilesDir(null), "telemetry_overlay.mp4")
+
+            TelemetryOverlayRenderer.renderGreenScreenOverlay(
+                context = this,
+                gpxFile = gpxFile,
+                outputVideoFile = outputFile
+            ) { success, path ->
+                runOnUiThread {
+                    if (success) {
+                        statusText.text = "Success! Overlay Video Created:\n$path\n\nImport into CapCut and apply Chroma Key (Green)!"
+                    } else {
+                        statusText.text = "Error generating overlay video."
+                    }
                 }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            statusText.text = "Error reading selected file."
         }
     }
 }
