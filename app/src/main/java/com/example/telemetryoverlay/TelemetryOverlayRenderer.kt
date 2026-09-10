@@ -2,8 +2,8 @@ package com.example.telemetryoverlay
 
 import android.content.Context
 import android.graphics.*
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
+import com.arthenica.mobileffmpeg.Config
+import com.arthenica.mobileffmpeg.FFmpeg
 import org.w3c.dom.Element
 import java.io.File
 import java.io.FileOutputStream
@@ -80,12 +80,15 @@ object TelemetryOverlayRenderer {
                     val elevStr = String.format(Locale.US, "ELEV: %.0f m", point.elevationM)
                     canvas.drawText("$distStr | $elevStr", cardLeft + 20f, yPos, textPaint)
 
+                    // Format speed (m/s) to Pace (MM:SS /km)
                     yPos += 40f
                     val paceStr = if (point.speedMs > 0.5) {
-                        val secPerKm = (1000 / point.speedMs).toInt()
-                        String.format(Locale.US, "PACE: %d'%02d\" /km", secPerKm / 60, secPerKm % 60)
+                        val totalSecondsPerKm = (1000 / point.speedMs).toInt()
+                        val minutes = totalSecondsPerKm / 60
+                        val seconds = totalSecondsPerKm % 60
+                        String.format(Locale.US, "PACE: %02d:%02d /km", minutes, seconds)
                     } else {
-                        "PACE: --'--\""
+                        "PACE: --:-- /km"
                     }
                     canvas.drawText(paceStr, cardLeft + 20f, yPos, textPaint)
 
@@ -104,14 +107,14 @@ object TelemetryOverlayRenderer {
                 onProgress("Encoding MP4 video with FFmpeg...")
 
                 val ffmpegCmd = "-y -r 1 -i ${frameDir.absolutePath}/frame_%05d.png -c:v libx264 -preset ultrafast -pix_fmt yuv420p ${outputVideoFile.absolutePath}"
-                val session = FFmpegKit.execute(ffmpegCmd)
+                val rc = FFmpeg.execute(ffmpegCmd)
 
                 frameDir.deleteRecursively()
 
-                if (ReturnCode.isSuccess(session.returnCode)) {
+                if (rc == Config.RETURN_CODE_SUCCESS) {
                     onComplete(true, outputVideoFile.absolutePath)
                 } else {
-                    onComplete(false, "FFmpeg failed with code ${session.returnCode}")
+                    onComplete(false, "FFmpeg failed with return code $rc")
                 }
             } catch (t: Throwable) {
                 t.printStackTrace()
