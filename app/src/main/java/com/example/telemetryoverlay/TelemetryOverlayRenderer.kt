@@ -4,13 +4,10 @@ import android.content.Context
 import android.graphics.*
 import com.arthenica.mobileffmpeg.Config
 import com.arthenica.mobileffmpeg.FFmpeg
-import com.garmin.fit.*
 import org.w3c.dom.Element
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 
 data class TelemetryPoint(
@@ -36,25 +33,18 @@ object TelemetryOverlayRenderer {
                 if (frameDir.exists()) frameDir.deleteRecursively()
                 frameDir.mkdirs()
 
-                // Parse GPX or FIT file safely
-                val points = if (inputFile.name.endsWith(".fit", ignoreCase = true)) {
-                    parseFitFile(inputFile)
-                } else {
-                    parseGpxFile(inputFile)
-                }
+                // Parse GPX file
+                val points = parseGpxFile(inputFile)
 
                 if (points.isEmpty()) {
-                    onComplete(false, "No valid telemetry data parsed from file.")
+                    onComplete(false, "No valid telemetry points found in file.")
                     return@Thread
                 }
 
                 val fps = 30
-                val totalFrames = points.size * fps
-
                 val width = 1280
                 val height = 720
                 
-                // Single bitmap memory recycling to eliminate OutOfMemory crash
                 val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                 val canvas = Canvas(bitmap)
 
@@ -71,7 +61,7 @@ object TelemetryOverlayRenderer {
                 var currentFrame = 0
                 for (point in points) {
                     for (f in 0 until fps) {
-                        canvas.drawColor(Color.GREEN) // Chroma key green
+                        canvas.drawColor(Color.GREEN) // Green screen background
 
                         val cardLeft = 40f
                         val cardTop = height - 260f
@@ -157,7 +147,7 @@ object TelemetryOverlayRenderer {
                         ?: ext.getElementsByTagName("gpxdata:speed").item(0)
 
                     distKm = (distElem?.textContent?.toDoubleOrNull() ?: 0.0) / 1000.0
-                    cadence = (cadElem?.textContent?.toIntOrNull() ?: 0) * 2 // Coros reports single leg cadence
+                    cadence = (cadElem?.textContent?.toIntOrNull() ?: 0) * 2
                     speedMs = speedElem?.textContent?.toDoubleOrNull() ?: 0.0
                 }
 
@@ -173,47 +163,6 @@ object TelemetryOverlayRenderer {
                         heartRate = 0
                     )
                 )
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return points
-    }
-
-    private fun parseFitFile(file: File): List<TelemetryPoint> {
-        val points = mutableListOf<TelemetryPoint>()
-        try {
-            val decode = Decode()
-            val mesgBroadcaster = MesgBroadcaster(decode)
-
-            mesgBroadcaster.addListener(RecordMesgListener { mesg ->
-                val distM = mesg.getDistance() ?: 0f
-                val speed = mesg.getSpeed() ?: 0f
-                val cad = mesg.getCadence() ?: 0
-                val altitude = mesg.getAltitude() ?: 0f
-                val hr = mesg.getHeartRate() ?: 0
-                val timestamp = mesg.getTimestamp()
-
-                val timeStr = if (timestamp != null) {
-                    val sdf = SimpleDateFormat("HH:mm:ss", Locale.US)
-                    sdf.timeZone = TimeZone.getTimeZone("UTC")
-                    sdf.format(timestamp.date)
-                } else ""
-
-                points.add(
-                    TelemetryPoint(
-                        timeIso = timeStr,
-                        distanceKm = (distM / 1000.0),
-                        speedMs = speed.toDouble(),
-                        cadence = cad * 2,
-                        elevationM = altitude.toDouble(),
-                        heartRate = hr.toInt()
-                    )
-                )
-            })
-
-            FileInputStream(file).use { input ->
-                decode.read(input, mesgBroadcaster, mesgBroadcaster)
             }
         } catch (e: Exception) {
             e.printStackTrace()
