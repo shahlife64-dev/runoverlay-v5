@@ -2,8 +2,8 @@ package com.example.telemetryoverlay
 
 import android.content.Context
 import android.graphics.*
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
+import com.arthenica.mobileffmpeg.Config
+import com.arthenica.mobileffmpeg.FFmpeg
 import java.io.File
 import java.io.FileOutputStream
 
@@ -77,9 +77,9 @@ object TelemetryOverlayRenderer {
             }
 
             val ffmpegCmd = "-y -r $fps -i ${frameDir.absolutePath}/frame_%04d.png -c:v libx264 -pix_fmt yuv420p ${outputVideoFile.absolutePath}"
-            val session = FFmpegKit.execute(ffmpegCmd)
+            val rc = FFmpeg.execute(ffmpegCmd)
 
-            if (ReturnCode.isSuccess(session.returnCode)) {
+            if (rc == Config.RETURN_CODE_SUCCESS) {
                 onComplete(true, outputVideoFile.absolutePath)
             } else {
                 onComplete(false, "")
