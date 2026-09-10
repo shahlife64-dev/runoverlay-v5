@@ -35,8 +35,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    
-    // Stable FFmpeg binaries built via JitPack
+
+    // FFmpeg binary for video rendering
     implementation 'com.github.tanersener:mobile-ffmpeg:v4.4.LTS'
-    implementation 'com.garmin:fit:21.105.0'
 }
