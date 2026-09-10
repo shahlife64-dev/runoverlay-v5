@@ -38,4 +38,5 @@ dependencies {
     
     // Stable FFmpeg binaries built via JitPack
     implementation 'com.github.tanersener:mobile-ffmpeg:v4.4.LTS'
+    implementation 'com.garmin:fit:21.105.0'
 }
