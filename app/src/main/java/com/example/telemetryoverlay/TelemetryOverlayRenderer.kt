@@ -7,9 +7,9 @@ import com.arthenica.mobileffmpeg.FFmpeg
 import org.w3c.dom.Element
 import java.io.File
 import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.math.*
 
 data class TelemetryPoint(
     val timeIso: String = "",
@@ -40,7 +40,7 @@ object TelemetryOverlayRenderer {
                 val points = parseGpxFile(inputFile)
 
                 if (points.isEmpty()) {
-                    onComplete(false, "No valid telemetry points found.")
+                    onComplete(false, "Error: GPX file contains 0 valid track points.")
                     return@Thread
                 }
 
@@ -82,7 +82,7 @@ object TelemetryOverlayRenderer {
                     val elevStr = String.format(Locale.US, "ELEV: %.0f m", point.elevationM)
                     canvas.drawText("$distStr | $elevStr", cardLeft + 20f, yPos, textPaint)
 
-                    // Calculate Pace safely
+                    // Pace Calculation logic
                     yPos += 40f
                     var currentSpeedMs = point.speedMs
 
@@ -92,7 +92,7 @@ object TelemetryOverlayRenderer {
                         val timeDiffSec = if (point.timeMillis > 0 && prevPoint.timeMillis > 0) {
                             (point.timeMillis - prevPoint.timeMillis) / 1000.0
                         } else {
-                            1.0 // fallback to 1 sec step
+                            1.0
                         }
                         
                         if (timeDiffSec > 0 && distDiffKm > 0) {
@@ -137,11 +137,11 @@ object TelemetryOverlayRenderer {
                 if (rc == Config.RETURN_CODE_SUCCESS) {
                     onComplete(true, outputVideoFile.absolutePath)
                 } else {
-                    onComplete(false, "FFmpeg failed with return code $rc")
+                    onComplete(false, "FFmpeg encoding failed (code $rc)")
                 }
             } catch (t: Throwable) {
                 t.printStackTrace()
-                onComplete(false, t.localizedMessage ?: "Unknown Error")
+                onComplete(false, "Error: ${t.javaClass.simpleName} - ${t.localizedMessage}")
             }
         }.start()
     }
@@ -151,20 +151,33 @@ object TelemetryOverlayRenderer {
 
         try {
             val factory = DocumentBuilderFactory.newInstance()
-            factory.isNamespaceAware = true
+            factory.isNamespaceAware = false // Disable namespace strictness for robust tag extraction
             val builder = factory.newDocumentBuilder()
             val doc = builder.parse(file)
             val trkpts = doc.getElementsByTagName("trkpt")
 
+            var accumDistanceKm = 0.0
+            var prevLat = 0.0
+            var prevLon = 0.0
+
             for (i in 0 until trkpts.length) {
                 val node = trkpts.item(i) as Element
+                val lat = node.getAttribute("lat").toDoubleOrNull() ?: 0.0
+                val lon = node.getAttribute("lon").toDoubleOrNull() ?: 0.0
+                
                 val ele = node.getElementsByTagName("ele").item(0)?.textContent?.toDoubleOrNull() ?: 0.0
                 val timeRaw = node.getElementsByTagName("time").item(0)?.textContent ?: ""
-                
-                var timeMs = 0L
+
+                // Dynamic GPS Distance Calculation (Haversine formula)
+                if (i > 0 && lat != 0.0 && lon != 0.0 && prevLat != 0.0 && prevLon != 0.0) {
+                    accumDistanceKm += haversineKm(prevLat, prevLon, lat, lon)
+                }
+                prevLat = lat
+                prevLon = lon
+
+                var timeMs = (i * 1000).toLong() // Fallback 1 sec step
                 val cleanTimeStr = timeRaw.replace("Z", "").replace("T", " ")
                 try {
-                    // Safe timestamp parsing across different ISO formats
                     val timePart = cleanTimeStr.substringAfter(" ").substringBefore(".")
                     val parts = timePart.split(":")
                     if (parts.size == 3) {
@@ -175,27 +188,33 @@ object TelemetryOverlayRenderer {
                     }
                 } catch (_: Exception) {}
 
-                var distKm = 0.0
                 var cadence = 0
                 var speedMs = 0.0
+                var explicitDistKm = 0.0
 
+                // Search extensions regardless of tag prefix
                 val extensions = node.getElementsByTagName("extensions")
                 if (extensions.length > 0) {
                     val ext = extensions.item(0) as Element
                     
-                    val distElem = ext.getElementsByTagNameNS("*", "distance").item(0)
-                        ?: ext.getElementsByTagName("gpxdata:distance").item(0)
-                    val cadElem = ext.getElementsByTagNameNS("*", "cadence").item(0)
-                        ?: ext.getElementsByTagName("gpxdata:cadence").item(0)
-                    val speedElem = ext.getElementsByTagNameNS("*", "speed").item(0)
-                        ?: ext.getElementsByTagName("gpxdata:speed").item(0)
+                    val distNodes = ext.getElementsByTagName("distance")
+                    if (distNodes.length > 0) {
+                        explicitDistKm = (distNodes.item(0).textContent.toDoubleOrNull() ?: 0.0) / 1000.0
+                    }
 
-                    distKm = (distElem?.textContent?.toDoubleOrNull() ?: 0.0) / 1000.0
-                    cadence = (cadElem?.textContent?.toIntOrNull() ?: 0) * 2
-                    
-                    val parsedSpeed = speedElem?.textContent?.toDoubleOrNull() ?: 0.0
-                    speedMs = if (parsedSpeed > 30.0) parsedSpeed / 3.6 else parsedSpeed
+                    val cadNodes = ext.getElementsByTagName("cadence")
+                    if (cadNodes.length > 0) {
+                        cadence = (cadNodes.item(0).textContent.toIntOrNull() ?: 0) * 2
+                    }
+
+                    val speedNodes = ext.getElementsByTagName("speed")
+                    if (speedNodes.length > 0) {
+                        val parsedSpeed = speedNodes.item(0).textContent.toDoubleOrNull() ?: 0.0
+                        speedMs = if (parsedSpeed > 30.0) parsedSpeed / 3.6 else parsedSpeed
+                    }
                 }
+
+                val finalDistanceKm = if (explicitDistKm > 0.0) explicitDistKm else accumDistanceKm
 
                 val formattedTime = if (timeRaw.contains("T")) {
                     timeRaw.substringAfter("T").substringBefore(".").substringBefore("Z")
@@ -205,7 +224,7 @@ object TelemetryOverlayRenderer {
                     TelemetryPoint(
                         timeIso = formattedTime,
                         timeMillis = timeMs,
-                        distanceKm = distKm,
+                        distanceKm = finalDistanceKm,
                         speedMs = speedMs,
                         cadence = cadence,
                         elevationM = ele,
@@ -217,5 +236,14 @@ object TelemetryOverlayRenderer {
             e.printStackTrace()
         }
         return points
+    }
+
+    private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val r = 6371.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2).pow(2) + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return r * c
     }
 }
