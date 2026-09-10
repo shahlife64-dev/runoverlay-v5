@@ -54,12 +54,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            statusText.text = "Loaded: $selectedFileName"
+            statusText.text = "Loaded File: $selectedFileName"
         }
     }
 
     private fun processTelemetryOverlay() {
-        statusText.text = "Parsing telemetry & rendering video..."
+        statusText.text = "Preparing telemetry data..."
 
         try {
             val localFile = File(cacheDir, selectedFileName)
@@ -72,16 +72,22 @@ class MainActivity : AppCompatActivity() {
             TelemetryOverlayRenderer.renderGreenScreenOverlay(
                 context = this,
                 inputFile = localFile,
-                outputVideoFile = outputFile
-            ) { success, path ->
-                runOnUiThread {
-                    if (success) {
-                        statusText.text = "Success!\nSaved MP4 to:\n$path\n\nImport into CapCut and key out green background!"
-                    } else {
-                        statusText.text = "Failed to create overlay video. Check file format."
+                outputVideoFile = outputFile,
+                onProgress = { message ->
+                    runOnUiThread {
+                        statusText.text = message
+                    }
+                },
+                onComplete = { success, path ->
+                    runOnUiThread {
+                        if (success) {
+                            statusText.text = "Success!\nSaved MP4 to:\n$path\n\nImport into CapCut and apply Chroma Key (Green)!"
+                        } else {
+                            statusText.text = "Error generating overlay video."
+                        }
                     }
                 }
-            }
+            )
         } catch (e: Exception) {
             e.printStackTrace()
             statusText.text = "Error reading selected file."
